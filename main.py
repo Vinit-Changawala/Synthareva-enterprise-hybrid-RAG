@@ -532,12 +532,11 @@ def write_retrieval_cache(query: str, docs: List, cache: Dict) -> None:
 # 11. FAITHFULNESS CHECK
 #
 # Evaluates whether the answer is grounded in the context.
-# Strict YES/NO extraction handles verbose LLM responses.
 # ============================================================
 
 def faithfulness_check(answer: str, context: str) -> str:
     eval_prompt = f"""
-You are a faithfulness evaluator. Judge whether the answer is supported by the context.
+You are a faithfulness evaluator. Your job is to judge whether an answer is honest and grounded.
 
 ## Answer
 {answer}
@@ -545,11 +544,27 @@ You are a faithfulness evaluator. Judge whether the answer is supported by the c
 ## Context
 {context}
 
-## Rules
-RULE 1 — If the answer says "I don't know" or that documents don't contain the info → YES
-RULE 2 — If every factual claim in the answer is directly supported by the context → YES
-RULE 3 — If any claim cannot be found in the context → NO
-RULE 4 — If the answer correctly notes what is covered and what is missing → YES
+## How to evaluate
+
+CASE 1 — The answer says a document does NOT mention something, or says "I don't know":
+  → Check: does the context actually lack that information?
+  → If yes (context genuinely doesn't have it): respond YES
+  → If no (context DOES contain the information but the answer ignored it): respond NO
+
+CASE 2 — The answer makes factual claims:
+  → Check: is every factual claim directly supported by the context?
+  → If every claim is supported: respond YES
+  → If any claim is invented or contradicts the context: respond NO
+
+CASE 3 — The answer is a comparative synthesis across multiple documents:
+  → Judge each document's section separately using CASE 1 or CASE 2
+  → If all sections are honest and grounded: respond YES
+  → Only respond NO if a specific claim is fabricated or contradicts context
+
+## Important
+- Honest uncertainty ("this document does not mention X") is FAITHFUL if the context lacks X
+- Do not penalise the answer for being incomplete — only penalise fabrication
+- A partial answer that correctly states what it found and what it didn't is FAITHFUL
 
 Respond with exactly one word: YES or NO
 No explanation. No punctuation. Just YES or NO.

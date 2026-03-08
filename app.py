@@ -411,18 +411,28 @@ if uploaded_files and st.session_state.kb_ready:
                 mf.record_metric(st.session_state.metrics, "retrieval_cache_hits")
             else:
                 # ── Retrieval — mode-driven ───────────────────
-                # Comparative: guarantees coverage from every selected PDF
-                # Compliance:  global hybrid BM25 + ANN
+                expanded_queries = mf.expand_query(query)
+
                 if mode_key == "comparative" and len(selected_pdfs) > 1:
-                    all_retrieved = mf.retrieve_per_document(
-                        query,
-                        st.session_state.vectorstore,
-                        selected_pdfs,
-                        chunks_per_doc=3,
-                    )
+                    # Run per-document retrieval for each expanded query variant,
+                    # then deduplicate across all variants before reranking.
+                    seen_hashes = set()
+                    all_retrieved = []
+                    for q_variant in expanded_queries:
+                        docs = mf.retrieve_per_document(
+                            q_variant,
+                            st.session_state.vectorstore,
+                            selected_pdfs,
+                            chunks_per_doc=3,
+                        )
+                        for doc in docs:
+                            doc_hash = hash(doc.page_content[:100])
+                            if doc_hash not in seen_hashes:
+                                seen_hashes.add(doc_hash)
+                                all_retrieved.append(doc)
                 else:
-                    # Query expansion: retrieves on original + 3 paraphrases
-                    # fixes vocabulary mismatch (e.g. "pretraining data" vs "same corpus")
+                    # Query expansion: retrieves on original + 3 paraphrases,
+                    # deduplicates, then passes full candidate set to reranker.
                     all_retrieved = mf.retrieve_with_expansion(
                         query, retriever
                     )
