@@ -1,0 +1,20 @@
+﻿# API keys — never commit
+.env
+
+# Virtual environment — too large, not needed on GitHub
+.venv/
+
+# Chroma vector database — rebuilt on upload
+chroma_langchain_db/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# VSCode settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

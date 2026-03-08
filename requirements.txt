@@ -1,0 +1,36 @@
+# ============================================================
+# requirements.txt — Enterprise Hybrid RAG
+# ============================================================
+
+# Core
+python-dotenv==1.0.1
+streamlit==1.50.0
+
+# LangChain ecosystem
+langchain==0.3.27
+langchain-community==0.3.27
+langchain-text-splitters==0.3.11
+langchain-huggingface==0.3.1       # HuggingFaceEmbeddings (local, no API needed)
+langchain-core==0.3.83
+langchain-chroma==0.2.6
+langchain-mistralai==0.2.4          # LLM: Mistral AI API 
+
+# Vector store
+chromadb==1.4.1
+
+# PDF loading
+pypdf==6.6.0
+
+# Embeddings (local, runs on CPU — no API call)
+sentence-transformers==5.1.2        # HuggingFaceEmbeddings + CrossEncoder reranker
+
+# Sparse retrieval
+rank-bm25==0.2.2
+
+# GraphRAG dependencies
+spacy==3.7.4                        # NER entity extraction for knowledge graph
+# After install, run: python -m spacy download en_core_web_sm
+networkx==3.3                       # Knowledge graph construction + traversal
+
+# Utilities
+pandas==2.3.3
