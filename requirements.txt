@@ -1,36 +1,44 @@
 # ============================================================
-# requirements.txt — Enterprise Hybrid RAG
+# requirements.txt — Synthareva
 # ============================================================
 
-# Core
-python-dotenv==1.0.1
-streamlit==1.50.0
+# Core numeric — must stay below 2.0 for spaCy/thinc compatibility
+numpy<2.0
 
-# LangChain ecosystem
-langchain==0.3.27
-langchain-community==0.3.27
-langchain-text-splitters==0.3.11
-langchain-huggingface==0.3.1       # HuggingFaceEmbeddings (local, no API needed)
-langchain-core==0.3.83
-langchain-chroma==0.2.6
-langchain-mistralai==0.2.4          # LLM: Mistral AI API 
+# NLP — entity extraction for knowledge graph
+spacy==3.7.4
+
+# LangChain stack
+langchain==0.3.7
+langchain-community==0.3.7
+langchain-huggingface==0.1.2
+langchain-chroma==0.1.4
+langchain-mistralai==0.2.4
+langchain-core==0.3.15
+langchain-text-splitters==0.3.2
 
 # Vector store
-chromadb==1.4.1
+chromadb==0.5.18
+
+# Embeddings + reranker
+sentence-transformers==3.3.1
+huggingface-hub==0.26.2
 
 # PDF loading
-pypdf==6.6.0
+pypdf==5.1.0
 
-# Embeddings (local, runs on CPU — no API call)
-sentence-transformers==5.1.2        # HuggingFaceEmbeddings + CrossEncoder reranker
-
-# Sparse retrieval
+# BM25 retrieval
 rank-bm25==0.2.2
 
-# GraphRAG dependencies
-spacy==3.7.4                        # NER entity extraction for knowledge graph
-# After install, run: python -m spacy download en_core_web_sm
-networkx==3.3                       # Knowledge graph construction + traversal
+# Graph
+networkx==3.4.2
 
-# Utilities
-pandas==2.3.3
+# UI
+streamlit==1.40.2
+
+# Env
+python-dotenv==1.0.1
+
+# spaCy English model — downloaded directly so Streamlit Cloud
+# doesn't need to run "python -m spacy download en_core_web_sm"
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
