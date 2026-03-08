@@ -201,20 +201,21 @@ enable_graph = st.sidebar.toggle(
     "Enable relationship search",
     value=False,
     help=(
-        "Builds a knowledge graph of entities and relationships from your documents. "
+        "Uses a knowledge graph of entities and relationships built from your documents. "
         "Useful for questions like 'How are X and Y connected?' or 'What influenced X?'\n\n"
-        "Adds 3–5 minutes to first indexing. Leave OFF for factual questions."
+        "Graph is built automatically on upload — toggle activates instantly, no re-upload needed."
     )
 )
 
-if enable_graph and st.session_state.knowledge_graph is not None:
+if st.session_state.knowledge_graph is not None:
     stats = st.session_state.knowledge_graph.get_stats()
     if stats["nodes"] > 0:
+        status = "🟢 Active" if enable_graph else "⚪ Built (toggle to activate)"
         st.sidebar.caption(
-            f"✅ {stats['nodes']} entities · {stats['edges']} relationships"
+            f"{status} · {stats['nodes']} entities · {stats['edges']} relationships"
         )
-    else:
-        st.sidebar.caption("⚠️ Graph is empty — re-upload with Smart Search ON to rebuild")
+    elif st.session_state.kb_ready:
+        st.sidebar.caption("⚠️ Graph built but empty — check spaCy model install")
 
 # ============================================================
 # SIDEBAR — 4. Session Stats
@@ -312,14 +313,13 @@ if uploaded_files and not st.session_state.kb_ready:
         progress.progress(70, text="Building RAG chain...")
 
         rag_chain = mf.build_chat_rag_chain(mode=mode_key)
-        progress.progress(80, text="Building knowledge graph (if enabled)...")
+        progress.progress(80, text="Building knowledge graph...")
 
-        if enable_graph:
-            kg = KnowledgeGraph()
-            kg.build_from_chunks(chunks)
-            st.session_state.knowledge_graph = kg
-        else:
-            st.session_state.knowledge_graph = KnowledgeGraph()
+        # Always build — toggle only controls whether it is USED at query time.
+        # No re-upload needed to activate Smart Search.
+        kg = KnowledgeGraph()
+        kg.build_from_chunks(chunks)
+        st.session_state.knowledge_graph = kg
 
         st.session_state.vectorstore = vectorstore
         st.session_state.retriever = retriever
@@ -421,7 +421,11 @@ if uploaded_files and st.session_state.kb_ready:
                         chunks_per_doc=3,
                     )
                 else:
-                    all_retrieved = retriever.invoke(query)
+                    # Query expansion: retrieves on original + 3 paraphrases
+                    # fixes vocabulary mismatch (e.g. "pretraining data" vs "same corpus")
+                    all_retrieved = mf.retrieve_with_expansion(
+                        query, retriever
+                    )
 
                 # Scope to user-selected PDFs
                 retrieved_docs = [
@@ -521,6 +525,10 @@ if uploaded_files and st.session_state.kb_ready:
 
         # ── Chat History ──────────────────────────────────────
         st.session_state.chat_history.append((query, answer, citations, faithful))
+
+        # Force sidebar to re-render with updated metrics immediately
+        # (without this, stats only appear after the second question)
+        st.rerun()
 
 # ============================================================
 # CHAT HISTORY DISPLAY
