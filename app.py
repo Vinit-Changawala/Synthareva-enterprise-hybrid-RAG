@@ -21,7 +21,7 @@
 import base64
 import time
 import streamlit as st
-import main_fv as mfv
+import main as mf
 from graph_rag import KnowledgeGraph, combine_hybrid_results
 
 # ============================================================
@@ -134,7 +134,7 @@ uploaded_files = st.file_uploader(
 # RESET ON NEW UPLOAD
 # ============================================================
 if uploaded_files:
-    new_hash = mfv.hash_files(uploaded_files)
+    new_hash = mf.hash_files(uploaded_files)
     if st.session_state.file_hash != new_hash:
         st.session_state.file_hash = new_hash
         st.session_state.kb_ready = False
@@ -298,20 +298,20 @@ if uploaded_files and not st.session_state.kb_ready:
     with st.spinner("📦 Indexing documents..."):
         progress = st.progress(0, text="Loading PDFs...")
 
-        docs = mfv.load_pdfs(uploaded_files)
+        docs = mf.load_pdfs(uploaded_files)
         progress.progress(20, text="Splitting into chunks...")
 
-        chunks = mfv.split_docs(docs, max_chunks_per_source=200)
+        chunks = mf.split_docs(docs, max_chunks_per_source=200)
         st.session_state.chunks = chunks
         progress.progress(40, text="Building vector index...")
 
-        vectorstore = mfv.create_vectorstore(st.session_state.file_hash, chunks)
+        vectorstore = mf.create_vectorstore(st.session_state.file_hash, chunks)
         progress.progress(60, text="Building retriever...")
 
-        retriever = mfv.get_hybrid_retriever(chunks, vectorstore)
+        retriever = mf.get_hybrid_retriever(chunks, vectorstore)
         progress.progress(70, text="Building RAG chain...")
 
-        rag_chain = mfv.build_chat_rag_chain(mode=mode_key)
+        rag_chain = mf.build_chat_rag_chain(mode=mode_key)
         progress.progress(80, text="Building knowledge graph (if enabled)...")
 
         if enable_graph:
@@ -335,7 +335,7 @@ if uploaded_files and not st.session_state.kb_ready:
 # ============================================================
 if uploaded_files and st.session_state.kb_ready:
     if st.session_state.rag_mode != mode_key:
-        st.session_state.rag_chain = mfv.build_chat_rag_chain(mode_key)
+        st.session_state.rag_chain = mf.build_chat_rag_chain(mode_key)
         st.session_state.rag_mode = mode_key
 
 # ============================================================
@@ -343,7 +343,7 @@ if uploaded_files and st.session_state.kb_ready:
 # ============================================================
 def build_citations(question: str, answer: str, docs: list) -> list:
     """Select supporting docs and format as citation dicts."""
-    supporting = mfv.filter_supporting_docs(question, answer, docs)
+    supporting = mf.filter_supporting_docs(question, answer, docs)
 
     # Update chunk usage cache for diversity tracking
     for doc in supporting:
@@ -390,31 +390,31 @@ if uploaded_files and st.session_state.kb_ready:
 
     if query:
         t_start = time.time()
-        mfv.record_metric(st.session_state.metrics, "total_queries")
+        mf.record_metric(st.session_state.metrics, "total_queries")
 
         # ── Answer Cache ──────────────────────────────────────
-        cached = mfv.check_answer_cache(query, st.session_state.answer_cache)
+        cached = mf.check_answer_cache(query, st.session_state.answer_cache)
         if cached:
             answer   = cached["answer"]
             citations = cached["citations"]
             faithful = cached["faithful"]
-            mfv.record_metric(st.session_state.metrics, "cache_hits")
+            mf.record_metric(st.session_state.metrics, "cache_hits")
 
         else:
             # ── Retrieval Cache ───────────────────────────────
-            cached_docs = mfv.check_retrieval_cache(
+            cached_docs = mf.check_retrieval_cache(
                 query, st.session_state.retrieval_cache
             )
 
             if cached_docs:
                 retrieved_docs = cached_docs
-                mfv.record_metric(st.session_state.metrics, "retrieval_cache_hits")
+                mf.record_metric(st.session_state.metrics, "retrieval_cache_hits")
             else:
                 # ── Retrieval — mode-driven ───────────────────
                 # Comparative: guarantees coverage from every selected PDF
                 # Compliance:  global hybrid BM25 + ANN
                 if mode_key == "comparative" and len(selected_pdfs) > 1:
-                    all_retrieved = mfv.retrieve_per_document(
+                    all_retrieved = mf.retrieve_per_document(
                         query,
                         st.session_state.vectorstore,
                         selected_pdfs,
@@ -429,7 +429,7 @@ if uploaded_files and st.session_state.kb_ready:
                     if d.metadata.get("source") in selected_pdfs
                 ]
 
-                mfv.write_retrieval_cache(
+                mf.write_retrieval_cache(
                     query, retrieved_docs, st.session_state.retrieval_cache
                 )
 
@@ -442,7 +442,7 @@ if uploaded_files and st.session_state.kb_ready:
 
             # ── Post-Filter ───────────────────────────────────
             # Remove chunks shorter than 50 words (headers, footers, fragments)
-            retrieved_docs = mfv.post_filter(retrieved_docs, min_word_count=50)
+            retrieved_docs = mf.post_filter(retrieved_docs, min_word_count=50)
 
             # ── Diversity Sort ────────────────────────────────
             # Deprioritise chunks from (source, page) pairs used recently
@@ -455,20 +455,20 @@ if uploaded_files and st.session_state.kb_ready:
             )
 
             # ── Cross-Encoder Reranking ───────────────────────
-            retrieved_docs, top_score = mfv.rerank_docs(query, retrieved_docs, top_k=5)
-            mfv.update_retrieval_quality(st.session_state.metrics, top_score)
+            retrieved_docs, top_score = mf.rerank_docs(query, retrieved_docs, top_k=5)
+            mf.update_retrieval_quality(st.session_state.metrics, top_score)
 
             # ── Threshold Gate ────────────────────────────────
             # Only fires when best chunk is completely off-topic (score < -5.0)
-            if top_score < mfv.RELEVANCE_THRESHOLD:
+            if top_score < mf.RELEVANCE_THRESHOLD:
                 answer = (
                     "I don't know. The selected documents do not appear to contain "
                     "relevant information to answer this question."
                 )
                 citations = []
                 faithful = "YES"
-                mfv.record_metric(st.session_state.metrics, "below_threshold_count")
-                mfv.record_metric(st.session_state.metrics, "i_dont_know_count")
+                mf.record_metric(st.session_state.metrics, "below_threshold_count")
+                mf.record_metric(st.session_state.metrics, "i_dont_know_count")
 
             else:
                 # ── GraphRAG ──────────────────────────────────
@@ -476,13 +476,13 @@ if uploaded_files and st.session_state.kb_ready:
                 if enable_graph and knowledge_graph and not knowledge_graph.is_empty():
                     graph_result = knowledge_graph.traverse(query, max_hops=2)
                     if graph_result["found"]:
-                        mfv.record_metric(st.session_state.metrics, "graph_hits")
+                        mf.record_metric(st.session_state.metrics, "graph_hits")
                     retrieved_docs, graph_evidence = combine_hybrid_results(
                         retrieved_docs, graph_result, query
                     )
 
                 # ── Format Context ────────────────────────────
-                context = mfv.format_docs(retrieved_docs, graph_evidence)
+                context = mf.format_docs(retrieved_docs, graph_evidence)
 
                 # ── Conversation History ──────────────────────
                 history_text = "\n".join(
@@ -501,23 +501,23 @@ if uploaded_files and st.session_state.kb_ready:
                 citations = build_citations(query, answer, retrieved_docs)
 
                 # ── Faithfulness Check ────────────────────────
-                faithful = mfv.faithfulness_check(answer, context)
+                faithful = mf.faithfulness_check(answer, context)
 
             # ── Write Answer Cache ────────────────────────────
-            mfv.write_answer_cache(
+            mf.write_answer_cache(
                 query,
                 {"answer": answer, "citations": citations, "faithful": faithful},
                 st.session_state.answer_cache,
             )
 
         # ── Metrics ───────────────────────────────────────────
-        mfv.update_latency(st.session_state.metrics, time.time() - t_start)
+        mf.update_latency(st.session_state.metrics, time.time() - t_start)
         if faithful.strip().upper() == "YES":
-            mfv.record_metric(st.session_state.metrics, "faithfulness_yes")
+            mf.record_metric(st.session_state.metrics, "faithfulness_yes")
         else:
-            mfv.record_metric(st.session_state.metrics, "faithfulness_no")
+            mf.record_metric(st.session_state.metrics, "faithfulness_no")
         if "i don't know" in answer.lower() or "do not contain" in answer.lower():
-            mfv.record_metric(st.session_state.metrics, "i_dont_know_count")
+            mf.record_metric(st.session_state.metrics, "i_dont_know_count")
 
         # ── Chat History ──────────────────────────────────────
         st.session_state.chat_history.append((query, answer, citations, faithful))
