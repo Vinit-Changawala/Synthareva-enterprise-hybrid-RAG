@@ -5,39 +5,39 @@
 # Core numeric — must stay below 2.0 for spaCy/thinc compatibility
 numpy<2.0
 
-# NLP — entity extraction for knowledge graph
-spacy==3.7.4
+# Core
+python-dotenv==1.0.1
+streamlit==1.50.0
 
-# LangChain stack
-langchain==0.3.7
-langchain-community==0.3.7
-langchain-huggingface==0.1.2
-langchain-chroma==0.1.4
-langchain-mistralai==0.2.4
-langchain-core==0.3.15
-langchain-text-splitters==0.3.2
+# LangChain ecosystem
+langchain==0.3.27
+langchain-community==0.3.27
+langchain-text-splitters==0.3.11
+langchain-huggingface==0.3.1       # HuggingFaceEmbeddings (local, no API needed)
+langchain-core==0.3.83
+langchain-chroma==0.2.6
+langchain-mistralai==0.2.4          # LLM: Mistral AI API 
 
 # Vector store
-chromadb==0.5.18
-
-# Embeddings + reranker
-sentence-transformers==3.3.1
-huggingface-hub==0.26.2
+chromadb==1.4.1
 
 # PDF loading
-pypdf==5.1.0
+pypdf==6.6.0
 
-# BM25 retrieval
+# Embeddings (local, runs on CPU — no API call)
+sentence-transformers==5.1.2        # HuggingFaceEmbeddings + CrossEncoder reranker
+
+# Sparse retrieval
 rank-bm25==0.2.2
 
-# Graph
-networkx==3.4.2
+# GraphRAG dependencies
+spacy==3.7.4                        # NER entity extraction for knowledge graph
+# After install, run: python -m spacy download en_core_web_sm
+networkx==3.3                       # Knowledge graph construction + traversal
 
-# UI
-streamlit==1.40.2
+# Utilities
+pandas==2.3.3
 
-# Env
-python-dotenv==1.0.1
 
 # spaCy English model — downloaded directly so Streamlit Cloud
 # doesn't need to run "python -m spacy download en_core_web_sm"
