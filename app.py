@@ -302,7 +302,7 @@ if uploaded_files and not st.session_state.kb_ready:
         docs = mf.load_pdfs(uploaded_files)
         progress.progress(20, text="Splitting into chunks...")
 
-        chunks = mf.split_docs(docs, max_chunks_per_source=200)
+        chunks = mf.split_docs(docs)
         st.session_state.chunks = chunks
         progress.progress(40, text="Building vector index...")
 
@@ -342,8 +342,11 @@ if uploaded_files and st.session_state.kb_ready:
 # CITATION HELPER
 # ============================================================
 def build_citations(question: str, answer: str, docs: list) -> list:
-    """Select supporting docs and format as citation dicts."""
+    """Select supporting docs, format as citation dicts, flag unverified sources."""
     supporting = mf.filter_supporting_docs(question, answer, docs)
+
+    # Valid filenames are ONLY those from uploaded files
+    valid_sources = {f.name for f in uploaded_files}
 
     # Update chunk usage cache for diversity tracking
     for doc in supporting:
@@ -358,9 +361,11 @@ def build_citations(question: str, answer: str, docs: list) -> list:
         key = (doc.metadata.get("source"), doc.metadata.get("page"))
         if key not in seen:
             seen.add(key)
+            source = doc.metadata.get("source", "Unknown")
             citations.append({
-                "source": doc.metadata.get("source", "Unknown"),
+                "source": source,
                 "page": doc.metadata.get("page", "N/A"),
+                "verified": source in valid_sources,  # ← NEW
             })
     return citations
 
@@ -564,7 +569,14 @@ if st.session_state.chat_history:
             if c:
                 st.markdown("**📚 Sources:**")
                 for cite in c:
-                    st.write(f"• {cite['source']} — Page {cite['page']}")
+                    if cite.get("verified", True):
+                        st.write(f"• {cite['source']} — Page {cite['page']}")
+                    else:
+                        # Source filename not in uploaded files — LLM hallucinated it
+                        st.write(
+                            f"⚠️ **Unverified:** {cite['source']} — Page {cite['page']} "
+                            f"*(this file was not uploaded — citation may be hallucinated)*"
+                        )
             else:
                 st.write("📚 No sources cited.")
 

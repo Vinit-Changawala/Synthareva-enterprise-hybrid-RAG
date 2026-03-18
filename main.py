@@ -93,8 +93,24 @@ def load_pdfs(uploaded_files) -> List:
 #   has_numbers — used by numerical filter (TYPE_C queries)
 # ============================================================
 
-def split_docs(docs: List, max_chunks_per_source: int = 200) -> List:
-    """Split documents into chunks with per-source cap."""
+# ── REPLACE this function entirely ──────────────────────────────
+
+def split_docs(docs: List) -> List:
+    """
+    Split documents into chunks with dynamic per-source cap.
+
+    Cap scales with document size so short docs get full coverage
+    and large docs get generous (but bounded) sampling.
+
+    Cap formula:
+      ≤30 pages   → pages × 8  (full coverage)
+      ≤100 pages  → 300 chunks
+      ≤300 pages  → 500 chunks
+      >300 pages  → 700 chunks (EU AI Act, WHO guidelines)
+
+    Even sampling (not truncation) ensures the full document
+    is represented — no section is structurally excluded.
+    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=700,
         chunk_overlap=100,
@@ -115,10 +131,20 @@ def split_docs(docs: List, max_chunks_per_source: int = 200) -> List:
                 c.isdigit() for c in chunk.page_content
             )
 
-        # Sample evenly across document — don't just truncate
-        if len(chunks) > max_chunks_per_source:
-            step = len(chunks) / max_chunks_per_source
-            chunks = [chunks[int(i * step)] for i in range(max_chunks_per_source)]
+        # Dynamic cap — scales with document length
+        num_pages = len(source_docs)
+        if num_pages <= 30:
+            max_chunks = num_pages * 8
+        elif num_pages <= 100:
+            max_chunks = 300
+        elif num_pages <= 300:
+            max_chunks = 500
+        else:
+            max_chunks = 700
+
+        if len(chunks) > max_chunks:
+            step = len(chunks) / max_chunks
+            chunks = [chunks[int(i * step)] for i in range(max_chunks)]
 
         all_chunks.extend(chunks)
     return all_chunks
@@ -419,11 +445,14 @@ You are a precise document assistant. Answer questions strictly from the provide
    "I don't know. The documents do not contain information about this."
 3. If context partially answers the question, answer the covered part and note what is missing.
 4. After every fact, cite its source: [Source: filename.pdf, Page: N]
-5. Be concise and words needed to be accurate.
+5. Be concise and use only words needed to be accurate.
 6. Do not infer, deduce, or add information beyond what is written.
 7. You may have knowledge about these topics from training — ignore it entirely.
 8. Answer only from the context provided above, even if you know the answer from elsewhere.
-9. - Frame the answer in the most user friendly way possible.
+9. Frame the answer in the most user friendly way possible.
+10. CRITICAL — Source filenames: copy them EXACTLY from the [Source: filename, Page: N]
+    headers in the context above. Never invent, guess, or use filenames not present
+    in the context. If you cannot find a source header, do not cite one.
 
 Answer:
 """)
@@ -463,6 +492,7 @@ Rules:
 - You may have knowledge about these topics from training — ignore it entirely.
 - Base your answer only on the provided document context.
 - Frame the answer in the most user friendly way possible.
+- CRITICAL — Source filenames: copy them EXACTLY from the [Source: filename, Page: N headers in the context above. Never invent, guess, or use filenames not present in the context. If you cannot find a source header, do not cite one.
 
 Answer:
 """)
