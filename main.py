@@ -130,6 +130,10 @@ def split_docs(docs: List) -> List:
             chunk.metadata["has_numbers"] = any(
                 c.isdigit() for c in chunk.page_content
             )
+            # NEW — detect table-like content (multiple $ signs or % signs = likely financial table)
+            dollar_count = chunk.page_content.count("$")
+            percent_count = chunk.page_content.count("%")
+            chunk.metadata["has_table"] = (dollar_count >= 3 or percent_count >= 3)
 
         # Dynamic cap — scales with document length
         num_pages = len(source_docs)
@@ -407,7 +411,16 @@ def format_docs(docs: List, graph_evidence: str = "") -> str:
     for doc in docs:
         source = doc.metadata.get("source", "Unknown")
         page = doc.metadata.get("page", "N/A")
-        parts.append(f"[Source: {source}, Page: {page}]\n{doc.page_content}")
+        is_table = doc.metadata.get("has_table", False)
+
+        header = f"[Source: {source}, Page: {page}]"
+        if is_table:
+            # Warn the LLM that this chunk may contain flattened table data
+            header += "\n[NOTE: This chunk may contain financial table data. " \
+                      "Numbers from different columns may appear adjacent. " \
+                      "Do not compute percentages — only report values explicitly stated.]"
+
+        parts.append(f"{header}\n{doc.page_content}")
     return "\n\n".join(parts)
 
 
@@ -450,9 +463,8 @@ You are a precise document assistant. Answer questions strictly from the provide
 7. You may have knowledge about these topics from training — ignore it entirely.
 8. Answer only from the context provided above, even if you know the answer from elsewhere.
 9. Frame the answer in the most user friendly way possible.
-10. CRITICAL — Source filenames: copy them EXACTLY from the [Source: filename, Page: N]
-    headers in the context above. Never invent, guess, or use filenames not present
-    in the context. If you cannot find a source header, do not cite one.
+10. CRITICAL — Source filenames: copy them EXACTLY from the [Source: filename, Page: N headers in the context above. Never invent, guess, or use filenames not present in the context. If you cannot find a source header, do not cite one.
+11. NUMERICAL CAUTION: If context contains financial or statistical tables, report only values explicitly stated together. Do not compute ratios, percentages, or relationships between numbers unless the context explicitly states that relationship. If unsure, report the raw numbers and note you cannot confirm the relationship.
 
 Answer:
 """)
@@ -493,6 +505,7 @@ Rules:
 - Base your answer only on the provided document context.
 - Frame the answer in the most user friendly way possible.
 - CRITICAL — Source filenames: copy them EXACTLY from the [Source: filename, Page: N headers in the context above. Never invent, guess, or use filenames not present in the context. If you cannot find a source header, do not cite one.
+- NUMERICAL CAUTION: If context contains financial or statistical tables, report only values explicitly stated together. Do not compute ratios, percentages, or relationships between numbers unless the context explicitly states that relationship. If unsure, report the raw numbers and note you cannot confirm the relationship.
 
 Answer:
 """)

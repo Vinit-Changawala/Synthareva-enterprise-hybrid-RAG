@@ -54,18 +54,22 @@ def get_nlp():
 
 # spaCy entity types meaningful across all domains
 _KEEP_LABELS = {
-    "PERSON",      # researchers, authors, characters, executives
-    "ORG",         # companies, institutions, universities, WHO
-    "GPE",         # countries, cities — useful for compliance/legal
-    "PRODUCT",     # AWS, Python, drug names, software tools
-    "LAW",         # GDPR, Article 17, HIPAA
-    "EVENT",       # clinical trials, product launches, conferences
-    "WORK_OF_ART", # paper titles, book titles, report names
-    "NORP",        # nationalities, religious/political groups
+    "PERSON",
+    "ORG",
+    "GPE",
+    "PRODUCT",
+    "LAW",
+    "EVENT",
+    "WORK_OF_ART",
+    "NORP",
+    # ── Added for Finance / Medical / Policy ──
+    "MONEY",       # $383B revenue, €20M fine
+    "PERCENT",     # 7% HbA1c, 2% inflation
+    "QUANTITY",    # 2°C limit, 100k units
 }
 
-# Words spaCy sometimes tags as entities but are just noise
 _NOISE = {
+    # Numbers and ordinals (existing)
     "one", "two", "three", "four", "five", "six", "seven", "eight",
     "nine", "ten", "first", "second", "third", "fourth", "fifth",
     "many", "some", "all", "each", "both", "any", "every",
@@ -73,6 +77,17 @@ _NOISE = {
     "new", "old", "large", "small", "high", "low",
     "figure", "table", "section", "chapter", "page",
     "et al", "ibid", "e.g", "i.e",
+    # ── Domain-generic words added ─────────────
+    # Medical — appears in every clinical chunk
+    "study", "studies", "analysis", "result", "results", "finding",
+    "treatment", "level", "levels", "patient", "patients", "group",
+    "data", "evidence", "outcome", "outcomes", "review",
+    # Legal/Policy — appears in every regulatory chunk
+    "provision", "article", "paragraph", "member", "state", "party",
+    "regulation", "directive", "measure", "requirement", "obligation",
+    # Finance — appears in every annual report chunk
+    "period", "quarter", "year", "fiscal", "total", "amount",
+    "increase", "decrease", "change", "basis", "rate",
 }
 
 
@@ -96,41 +111,99 @@ def extract_ner_entities(text: str) -> List[Tuple[str, str]]:
             entities.append((clean, ent.label_))
     return entities
 
+# ── Regex patterns for domain term detection ─────────────────────────────
+# ALL-CAPS acronyms:   GDPR, WHO, ICU, BERT, NASA, HIPAA, EBITDA
+_ACRONYM_RE = re.compile(r'\b[A-Z]{2,10}\b')
+# Hyphenated terms:    COVID-19, HbA1c, multi-hop, cross-encoder
+_HYPHEN_RE  = re.compile(r'\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+\b')
+# Mixed-case clinical: HbA1c, mRNA, eGFR, kDa
+_MIXED_RE   = re.compile(r'\b[A-Za-z][a-z]*[A-Z0-9][A-Za-z0-9]{1,}\b')
 
-def extract_noun_phrases(text: str, min_words: int = 2, max_words: int = 5) -> List[str]:
+# Single-word terms too broad to be useful
+_SINGLE_NOISE = {
+    "COVID", "AI", "IT", "HR", "PR", "US", "UK", "EU", "UN",
+    "Fig", "Eq", "Sec", "Vol", "No",
+    "Inc", "Ltd", "LLC", "Corp",
+}
+
+
+def extract_domain_terms(text: str) -> List[Tuple[str, str]]:
     """
-    Layer 2: Multi-word noun phrases spaCy NER misses.
+    Layer 3: Single-word domain-specific terms missed by NER and noun phrases.
 
-    Targets domain-specific compound terms:
-      Research:    "multi-head attention", "knowledge distillation"
-      Programming: "neural network", "decision tree", "linked list"
-      Medical:     "hand hygiene", "infection prevention"
-      Compliance:  "data subject", "lawful basis", "right to erasure"
-      Financial:   "operating income", "free cash flow"
-      Novel:       character concept phrases
+    Catches:
+      ALL-CAPS acronyms  → GDPR, HbA1c, BERT, EBITDA, ICU, HIPAA
+      Hyphenated terms   → COVID-19, multi-head, cross-encoder, non-profit
+      Mixed-case clinical→ mRNA, eGFR, kDa
 
-    Only phrases appearing in 2+ chunks are kept (filtered in
-    build_from_chunks, not here).
+    These are the exact terms that dominate medical/policy query failures —
+    1-word concepts that noun phrases (needs 2+ words) and NER both miss.
+
+    Returns [(term, label), ...]
+    """
+    terms = []
+    seen  = set()
+
+    for pattern, label in [
+        (_ACRONYM_RE, "ACRONYM"),
+        (_HYPHEN_RE,  "COMPOUND"),
+        (_MIXED_RE,   "MIXED_CASE"),
+    ]:
+        for match in pattern.finditer(text):
+            raw   = match.group()
+            clean = raw.strip().lower()
+            if (clean in seen
+                    or clean in _NOISE
+                    or raw in _SINGLE_NOISE
+                    or len(clean) < 2
+                    or clean.isdigit()):
+                continue
+            seen.add(clean)
+            terms.append((clean, label))
+
+    return terms
+
+# ============================================================
+# 2b. Noun Phrase Extractor
+# Catches domain concepts that NER misses:
+#   Medical: "insulin resistance", "HbA1c target", "cardiovascular risk"
+#   Legal:   "data controller", "personal data", "high-risk AI system"
+#   Policy:  "national sovereignty", "cultural diversity", "carbon credit"
+# ============================================================
+def extract_noun_phrases(text: str) -> List[str]:
+    """
+    Extract meaningful noun phrases from text as graph nodes.
+    Complements NER — catches concepts, not just named entities.
+    Filters: 2-4 words, no pure stopwords, min 5 chars.
     """
     nlp = get_nlp()
     doc = nlp(text[:100000])
+
+    # spaCy stopwords to filter trivial phrases
+    stopwords = nlp.Defaults.stop_words
+
     phrases = []
     seen = set()
+
     for chunk in doc.noun_chunks:
-        # Strip leading determiners: "the transformer" -> "transformer"
         phrase = chunk.text.strip().lower()
-        phrase = re.sub(
-            r'^(the|a|an|this|that|these|those|its|their|our|my)\s+', '', phrase
-        )
-        phrase = re.sub(r'\s+', ' ', phrase).strip()
-        word_count = len(phrase.split())
-        if word_count < min_words or word_count > max_words:
+        phrase = re.sub(r'\s+', ' ', phrase)
+
+        # Filter: 2-4 words, at least 5 chars, not pure stopword
+        words = phrase.split()
+        if len(words) < 2 or len(words) > 4:
             continue
-        if len(phrase) < 4 or phrase.isdigit() or phrase in _NOISE:
+        if len(phrase) < 5:
             continue
+        # Skip if all content words are stopwords
+        content_words = [w for w in words if w not in stopwords]
+        if not content_words:
+            continue
+
         if phrase not in seen:
             seen.add(phrase)
             phrases.append(phrase)
+
     return phrases
 
 
@@ -159,56 +232,107 @@ class KnowledgeGraph:
         """
         Build co-occurrence graph from document chunks.
 
-        Two passes:
-          Pass 1: Count noun phrase frequencies globally.
-                  Keep only phrases appearing in 2+ chunks.
-          Pass 2: Build nodes and weighted co-occurrence edges.
+        THREE passes:
+        Pass 1: Count noun phrase AND domain term frequencies globally.
+                Dynamic threshold scales with corpus size.
+        Pass 2: Build nodes and weighted co-occurrence edges using
+                all three layers (NER + noun phrases + domain terms).
+        Pass 3: Prune hyper-frequent nodes connected to >60% of all
+                nodes — these are domain-generic words that survived
+                the _NOISE filter but still add no signal.
         """
         print(f"[GraphRAG] Building graph from {len(chunks)} chunks...")
 
-        # Pass 1 — count phrase frequencies
+        # Pass 1 — count phrase + domain term frequencies
         chunk_phrases = []
+        chunk_domain  = []
+
         for chunk in chunks:
             phrases = extract_noun_phrases(chunk.page_content)
+            domains = extract_domain_terms(chunk.page_content)
             chunk_phrases.append(phrases)
+            chunk_domain.append([t for t, _ in domains])
+
             for p in set(phrases):
                 self._phrase_freq[p] += 1
+            for t, _ in domains:
+                self._phrase_freq[t] += 1
 
-        frequent = {p for p, c in self._phrase_freq.items() if c >= 2}
+        # ── Dynamic frequency threshold ───────────────────────────────────
+        # OLD: hardcoded >= 2 killed unique concepts in large documents.
+        # A 300-page WHO guideline sampled to 200 chunks means
+        # "insulin resistance" appears in only 1 chunk → was filtered out.
+        #
+        #   <100 chunks  → threshold = 2  (small corpus, need repetition)
+        #   ≥100 chunks  → threshold = 1  (large corpus, keep everything sampled)
+        n = len(chunks)
+        freq_threshold = 2 if n < 100 else 1
+        frequent = {p for p, c in self._phrase_freq.items() if c >= freq_threshold}
 
-        # Pass 2 — build graph
+        # Pass 2 — build graph with all three extraction layers
         for i, chunk in enumerate(chunks):
             source = chunk.metadata.get("source", "unknown")
             page   = chunk.metadata.get("page", 0)
             text   = chunk.page_content
 
-            ner    = extract_ner_entities(text)
-            np_    = [p for p in chunk_phrases[i] if p in frequent]
+            ner     = extract_ner_entities(text)
+            np_     = [p for p in chunk_phrases[i] if p in frequent]
+            domain_ = [t for t in chunk_domain[i]  if t in frequent]
 
-            # All entities for this chunk (deduplicated)
-            all_ents = list({e[0] for e in ner} | set(np_))
+            # Merge all three layers, deduplicate by text
+            seen_ents: set = set()
+            all_ents: List[Tuple[str, str]] = []
+            for txt, lbl in ner:
+                if txt not in seen_ents:
+                    seen_ents.add(txt)
+                    all_ents.append((txt, lbl))
+            for txt in np_:
+                if txt not in seen_ents:
+                    seen_ents.add(txt)
+                    all_ents.append((txt, "CONCEPT"))
+            for txt in domain_:
+                if txt not in seen_ents:
+                    seen_ents.add(txt)
+                    all_ents.append((txt, "DOMAIN_TERM"))
+
+            ent_texts = [t for t, _ in all_ents]
 
             # Add/update nodes
-            for ent in all_ents:
-                if self.graph.has_node(ent):
-                    self.graph.nodes[ent]["mention_count"] += 1
+            for ent_txt, ent_lbl in all_ents:
+                if self.graph.has_node(ent_txt):
+                    self.graph.nodes[ent_txt]["mention_count"] += 1
                 else:
-                    label = next((lab for txt, lab in ner if txt == ent), "CONCEPT")
-                    self.graph.add_node(ent, label=label, mention_count=1, sources=[])
-
+                    self.graph.add_node(
+                        ent_txt, label=ent_lbl, mention_count=1, sources=[]
+                    )
                 src_ref = {"source": source, "page": page}
-                if src_ref not in self.entity_sources[ent]:
-                    self.entity_sources[ent].append(src_ref)
-                    self.graph.nodes[ent]["sources"].append(src_ref)
+                if src_ref not in self.entity_sources[ent_txt]:
+                    self.entity_sources[ent_txt].append(src_ref)
+                    self.graph.nodes[ent_txt]["sources"].append(src_ref)
 
-            # Add co-occurrence edges for every pair in this chunk
-            for j in range(len(all_ents)):
-                for k in range(j + 1, len(all_ents)):
-                    a, b = all_ents[j], all_ents[k]
+            # Co-occurrence edges for every pair in this chunk
+            for j in range(len(ent_texts)):
+                for k in range(j + 1, len(ent_texts)):
+                    a, b = ent_texts[j], ent_texts[k]
                     if self.graph.has_edge(a, b):
                         self.graph[a][b]["weight"] += 1
                     else:
                         self.graph.add_edge(a, b, weight=1, sources=[source])
+
+        # Pass 3 — prune hyper-frequent noise nodes
+        # A node connected to >60% of all nodes is a generic term
+        # ("health care", "data processing", "member states") —
+        # it connects everything without meaning anything specific.
+        if self.graph.number_of_nodes() > 10:
+            total_nodes     = self.graph.number_of_nodes()
+            noise_threshold = total_nodes * 0.60
+            to_remove = [
+                n for n in self.graph.nodes()
+                if self.graph.degree(n) > noise_threshold
+            ]
+            if to_remove:
+                print(f"[GraphRAG] Pruning {len(to_remove)} hyper-frequent noise nodes")
+                self.graph.remove_nodes_from(to_remove)
 
         print(
             f"[GraphRAG] Graph: {self.graph.number_of_nodes()} nodes, "
@@ -237,25 +361,57 @@ class KnowledgeGraph:
         if self.graph.number_of_nodes() == 0:
             return {"found": False, "evidence": "", "sources": []}
 
-        query_terms = list(set(
-            [e[0] for e in extract_ner_entities(query)] +
-            extract_noun_phrases(query)
-        ))
-        query_lower = query.lower()
-        graph_nodes = list(self.graph.nodes())
+        # Extract all query terms from all three layers
+        query_ner    = [e[0] for e in extract_ner_entities(query)]
+        query_np     = extract_noun_phrases(query)
+        query_domain = [t for t, _ in extract_domain_terms(query)]
+        query_terms  = list(set(query_ner + query_np + query_domain))
 
-        # Match query terms to graph nodes
-        matched = set()
-        for term in query_terms:
-            if term in self.graph:
-                matched.add(term)
+        query_lower  = query.lower()
+        graph_nodes  = list(self.graph.nodes())
+
+        # ── Normalised node index (Fix Gap 4) ───────────────────────────
+        # Pre-build a lookup: normalised form → original node name
+        # Normalisation: lowercase + remove hyphens + strip trailing 's'
+        # This makes "data-controller" match "data controller",
+        # "insulin-resistance" match "insulin resistance",
+        # "controllers" match "controller".
+        def _normalise(s: str) -> str:
+            s = s.lower().replace("-", " ").replace("_", " ")
+            s = re.sub(r'\s+', ' ', s).strip()
+            # Strip common plural/possessive suffixes for matching
+            if s.endswith("'s"):
+                s = s[:-2]
+            elif s.endswith("s") and len(s) > 4:
+                s = s[:-1]  # "controllers" → "controller"
+            return s
+
+        norm_to_node: Dict[str, str] = {}
         for node in graph_nodes:
-            if node in query_lower:
+            norm_to_node[_normalise(node)] = node
+
+        # Match query terms to graph nodes using normalised comparison
+        matched: set = set()
+
+        for term in query_terms:
+            term_norm = _normalise(term)
+            # Exact normalised match
+            if term_norm in norm_to_node:
+                matched.add(norm_to_node[term_norm])
+            # Substring: term is contained in a node or vice versa
+            for node in graph_nodes:
+                node_norm = _normalise(node)
+                if term_norm in node_norm or node_norm in term_norm:
+                    matched.add(node)
+
+        # Also scan raw query string for node substrings
+        # (catches cases where query term wasn't extracted but node name
+        #  appears verbatim in the query: "how does GDPR define X")
+        query_norm = _normalise(query_lower)
+        for node in graph_nodes:
+            node_norm = _normalise(node)
+            if node_norm in query_norm and len(node_norm) > 3:
                 matched.add(node)
-            else:
-                for term in query_terms:
-                    if node in term or term in node:
-                        matched.add(node)
 
         if not matched:
             return {
