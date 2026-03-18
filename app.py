@@ -243,17 +243,25 @@ if st.session_state.metrics["total_queries"] > 0:
     )
 
     avg_score = m.get("avg_top_rerank_score", 0.0)
+    # Recalibrated thresholds — accounts for cross-encoder domain mismatch.
+    # NLP papers score +2.5. Legal/medical/policy score -1.9 to -3.2 even
+    # when retrieval is correct — the cross-encoder was trained on web text.
+    # Thresholds widened so declarative/regulatory domains don't show false "Poor".
     quality_label = (
-        "✅ Good" if avg_score > 2.0
-        else "⚠️ Low" if avg_score > 0.0
-        else "❌ Poor"
+        "✅ Good"   if avg_score > 1.0   else
+        "⚠️ Low"   if avg_score > -3.0  else
+        "❌ Poor"
     )
+
     st.sidebar.metric(
         "Retrieval Quality",
         f"{avg_score:.1f} ({quality_label})",
         help=(
             "Average cross-encoder relevance score of best retrieved chunk. "
-            ">2: retrieval is working well | 0–2: borderline | <0: check PDF selection"
+            ">1: retrieval working well | -3 to 1: normal for legal/medical/policy text "
+            "| <-3: check if PDFs cover the topic. "
+            "Note: legal, medical, and policy documents naturally score lower than "
+            "research papers — this does not indicate retrieval failure."
         )
     )
 
@@ -416,13 +424,19 @@ if uploaded_files and st.session_state.kb_ready:
                 mf.record_metric(st.session_state.metrics, "retrieval_cache_hits")
             else:
                 # ── Retrieval — mode-driven ───────────────────
-                expanded_queries = mf.expand_query(query)
+                # Add expansion step that runs regardless of mode:
+
+                # ── Query Expansion (runs before mode split) ──────────────────
+                # Generates paraphrases to bridge vocabulary gaps.
+                # Compliance mode: all variants fed to EnsembleRetriever
+                # Comparative mode: expanded query used per-document retrieval
+                #                   (uses best variant, not all — avoids noise)
+                expanded_queries = mf.expand_query(query)  # [original, alt1, alt2, alt3]
 
                 if mode_key == "comparative" and len(selected_pdfs) > 1:
-                    # Run per-document retrieval for each expanded query variant,
-                    # then deduplicate across all variants before reranking.
-                    seen_hashes = set()
+                    # For comparative: use all variants, deduplicate across variants
                     all_retrieved = []
+                    seen_hashes = set()
                     for q_variant in expanded_queries:
                         docs = mf.retrieve_per_document(
                             q_variant,
@@ -436,11 +450,8 @@ if uploaded_files and st.session_state.kb_ready:
                                 seen_hashes.add(doc_hash)
                                 all_retrieved.append(doc)
                 else:
-                    # Query expansion: retrieves on original + 3 paraphrases,
-                    # deduplicates, then passes full candidate set to reranker.
-                    all_retrieved = mf.retrieve_with_expansion(
-                        query, retriever
-                    )
+                    # Strict mode: existing expand-then-retrieve function handles this
+                    all_retrieved = mf.retrieve_with_expansion(query, retriever)
 
                 # Scope to user-selected PDFs
                 retrieved_docs = [
@@ -482,7 +493,10 @@ if uploaded_files and st.session_state.kb_ready:
             if top_score < mf.RELEVANCE_THRESHOLD:
                 answer = (
                     "I don't know. The selected documents do not appear to contain "
-                    "relevant information to answer this question."
+                    "relevant information for this question. "
+                    "If you expected an answer here, try: (1) rephrasing using different "
+                    "keywords, (2) checking that the relevant PDF is selected in the sidebar, "
+                    "or (3) switching to Comparative mode to search across all documents."
                 )
                 citations = []
                 faithful = "YES"
